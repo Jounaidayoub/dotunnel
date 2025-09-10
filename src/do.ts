@@ -94,7 +94,7 @@ export class MyDurableObject extends DurableObject<Env> {
 				console.log(`❌ Request ${requestData.id} timed out after 30 seconds`);
 				resolve(new Response('Request timeout - no response from WebSocket client', { status: 504 })); // 504 Gateway Timeout
 				this.pendingRequests.delete(requestData.id);
-			}, 3000); // 30 second timeout
+			}, 30000); // 30 second timeout
 
 			// Store the resolve function to call it when we get the response
 			// We'll use the request ID to match responses
@@ -135,7 +135,7 @@ export class MyDurableObject extends DurableObject<Env> {
 		try {
 			// Parse the incoming message
 			const messageData = JSON.parse(message as string);
-			console.log('📩 Received WebSocket message:', messageData);
+			console.log('📩 Received WebSocket message:', messageData.id, messageData.isBinary || "not binary");
 
 			// Check if this is a response to a pending HTTP request
 			if (messageData.id && this.pendingRequests.has(messageData.id)) {
@@ -155,7 +155,7 @@ export class MyDurableObject extends DurableObject<Env> {
 					body=messageData.body;
 ``				}
 				// Create HTTP response from WebSocket response
-				const httpResponse = new Response(messageData.body, {
+				const httpResponse = new Response(body, {
 					status: messageData.status || 200,
 					headers: messageData.headers || { 'Content-Type': 'application/json' },
 				});

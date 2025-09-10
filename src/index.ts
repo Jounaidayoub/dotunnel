@@ -1,11 +1,9 @@
-import { DurableObject } from 'cloudflare:workers';
-import { Hono } from 'hono';
+import { DurableObject, env } from 'cloudflare:workers';
+import { Context, Hono, Next } from 'hono';
 
 const app = new Hono();
-import {MyDurableObject} from './do';
+import { MyDurableObject } from './do';
 export { MyDurableObject };
-
-
 
 // export default {
 // 	/**
@@ -93,39 +91,36 @@ app.get('/:proxy', async (c) => {
 	}
 	if (!proxy) {
 		return c.text('Proxy parameter is required', 400);
-	}	
+	}
 	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
 	stub.sayhello('world');
 	return stub.fetch(c.req.raw);
 });
 
-
-
 app.get('serve/:proxy/*', async (c) => {
 	const env = c.env as Env;
 	let proxy: string | undefined;
-	console.log("serving: ", c.req.param('proxy'));
-	
+	console.log('serving: ', c.req.param('proxy'));
+
 	try {
 		proxy = c.req.param('proxy');
 	} catch (error) {
 		return c.text('Invalid proxy', 400);
 	}
-	
+
 	if (!proxy) {
 		return c.text('Proxy parameter is required', 400);
 	}
-	
+
 	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-	
+
 	try {
 		// Use the internal WebSocket communication through processRequest
-		return await stub.processRequest(c.req.raw);
+		return await stub.processRequest(c.req.raw, proxy);
 	} catch (error) {
 		console.error('Error processing request through proxy:', error);
 		return c.text('Internal server error', 500);
 	}
 });
-
 
 export default app;
