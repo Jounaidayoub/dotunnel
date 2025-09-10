@@ -118,6 +118,15 @@ export class MyDurableObject extends DurableObject<Env> {
 		console.log(`Hello, ${name}!`);
 	}
 
+	base64ToArrayBuffer(base64: string): ArrayBuffer {
+    var binaryString = atob(base64);
+    var bytes = new Uint8Array(binaryString.length);
+    for (var i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
 	async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
 		// Get the session associated with the WebSocket connection.
 		const session = this.sessions.get(ws);
@@ -133,6 +142,17 @@ export class MyDurableObject extends DurableObject<Env> {
 				clearTimeout(pendingRequest.timeout);
 				this.pendingRequests.delete(messageData.id);
 
+				let body;
+
+				if (messageData.isBinary) {
+					//parsing base64 encoded binary data
+					console.log("decoding base64 binary data");
+					body=this.base64ToArrayBuffer(messageData.body);
+
+				}
+				else{
+					body=messageData.body;
+``				}
 				// Create HTTP response from WebSocket response
 				const httpResponse = new Response(messageData.body, {
 					status: messageData.status || 200,
