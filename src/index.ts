@@ -53,4 +53,31 @@ app.get('/:proxy', async (c) => {
 
 
 
+app.get('serve/:proxy/*', async (c) => {
+	const env = c.env as Env;
+	let proxy: string | undefined;
+	console.log("serving: ", c.req.param('proxy'));
+	
+	try {
+		proxy = c.req.param('proxy');
+	} catch (error) {
+		return c.text('Invalid proxy', 400);
+	}
+	
+	if (!proxy) {
+		return c.text('Proxy parameter is required', 400);
+	}
+	
+	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
+	
+	try {
+		// Use the internal WebSocket communication through processRequest
+		return await stub.processRequest(c.req.raw);
+	} catch (error) {
+		console.error('Error processing request through proxy:', error);
+		return c.text('Internal server error', 500);
+	}
+});
+
+
 export default app;

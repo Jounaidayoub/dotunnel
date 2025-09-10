@@ -1,38 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
 
-/**
- * Welcome to Cloudflare Workers! This is your first Durable Objects application.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your Durable Object in action
- * - Run `npm run deploy` to publish your application
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/durable-objects
- */
-
-/** A Durable Object's behavior is defined in an exported Javascript class */
-export  class MyDurableObject extends DurableObject<Env> {
-	// Keeps track of all WebSocket connections
-	// When the DO hibernates, gets reconstructed in the constructor
+export class MyDurableObject extends DurableObject<Env> {
 	sessions: Map<WebSocket, { [key: string]: string }>;
+
+	// Keeps track of pending HTTP requests waiting for WebSocket responses
+	pendingRequests: Map<string, { resolve: Function; reject: Function; timeout: number }>;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.sessions = new Map();
+		this.pendingRequests = new Map();
 
-		// As part of constructing the Durable Object,
-		// we wake up any hibernating WebSockets and
-		// place them back in the `sessions` map.
-
-		// Get all WebSocket connections from the DO
 		this.ctx.getWebSockets().forEach((ws) => {
 			let attachment = ws.deserializeAttachment();
 			if (attachment) {
-				// If we previously attached state to our WebSocket,
-				// let's add it to `sessions` map to restore the state of the connection.
 				this.sessions.set(ws, { ...attachment });
 			}
 		});
@@ -46,15 +27,6 @@ export  class MyDurableObject extends DurableObject<Env> {
 		const webSocketPair = new WebSocketPair();
 		const [client, server] = Object.values(webSocketPair);
 
-		// Calling `acceptWebSocket()` informs the runtime that this WebSocket is to begin terminating
-		// request within the Durable Object. It has the effect of "accepting" the connection,
-		// and allowing the WebSocket to send and receive messages.
-		// Unlike `ws.accept()`, `this.ctx.acceptWebSocket(ws)` informs the Workers Runtime that the WebSocket
-		// is "hibernatable", so the runtime does not need to pin this Durable Object to memory while
-		// the connection is open. During periods of inactivity, the Durable Object can be evicted
-		// from memory, but the WebSocket connection will remain open. If at some later point the
-		// WebSocket receives a message, the runtime will recreate the Durable Object
-		// (run the `constructor`) and deliver the message to the appropriate handler.
 		this.ctx.acceptWebSocket(server);
 
 		// Generate a random UUID for the session.
@@ -73,36 +45,137 @@ export  class MyDurableObject extends DurableObject<Env> {
 		});
 	}
 
-    sayhello(name: string): void {
-        console.log(`Hello, ${name}!`);
-    }
-    
+	async processRequest(request: Request): Promise<Response> {
+		console.log(`number of pending requests: ${this.pendingRequests.size}`);
+		// Get request data
+		const requestBody = await request.text();
+		const requestData = {
+			id: crypto.randomUUID(),
+			path: new URL(request.url).pathname.replace(/^\/serve\/nisada/, ''), // Remove /serve prefix
+			method: request.method,
+			body: requestBody || undefined,
+			headers: Object.fromEntries(request.headers.entries()),
+		};
+
+		// Find an active WebSocket connection to send the request to
+		let targetWebSocket: WebSocket | null = null;
+		console.log('Active sessions:', this.sessions.size);
+		this.sessions.forEach((session, ws) => {
+			console.log('Available session:', session, ws);
+		});
+		for (const [ws, session] of this.sessions) {
+			// Use the first available WebSocket connection
+
+			// console.log("available sessions:", this.sessions.forEach);
+			console.log('Using WebSocket session:', session);
+
+			targetWebSocket = ws;
+			break;
+		}
+
+		if (!targetWebSocket) {
+			return new Response(
+				JSON.stringify({
+					status: 'error',
+					message: 'No active WebSocket connections available',
+					timestamp: new Date().toISOString(),
+				}),
+				{
+					status: 503, // Service Unavailable
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
+
+		// Create a promise that will resolve when we get the response
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				console.log(`❌ Request ${requestData.id} timed out after 30 seconds`);
+				resolve(new Response('Request timeout - no response from WebSocket client', { status: 504 })); // 504 Gateway Timeout
+				this.pendingRequests.delete(requestData.id);
+			}, 3000); // 30 second timeout
+
+			// Store the resolve function to call it when we get the response
+			// We'll use the request ID to match responses
+			this.pendingRequests = this.pendingRequests || new Map();
+			this.pendingRequests.set(requestData.id, { resolve, reject, timeout });
+
+			try {
+				// Send the request data to the WebSocket client
+				targetWebSocket.send(JSON.stringify(requestData));
+				console.log(`📤 Sent request ${requestData.id} to WebSocket client`);
+			} catch (error) {
+				clearTimeout(timeout);
+				this.pendingRequests.delete(requestData.id);
+				reject(new Error('Failed to send request to WebSocket client'));
+			}
+		});
+	}
+
+
+
+	sayhello(name: string): void {
+		console.log(`Hello, ${name}!`);
+	}
+
 	async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
 		// Get the session associated with the WebSocket connection.
-		const session = this.sessions.get(ws)!;
+		const session = this.sessions.get(ws);
 
-		// Upon receiving a message from the client, the server replies with the same message, the session ID of the connection,
-		// and the total number of connections with the "[Durable Object]: " prefix
-		// ws.send(`[Durable Object] message: ${message}, from: ${session.id}. Total connections: ${this.sessions.size}`);
+		try {
+			// Parse the incoming message
+			const messageData = JSON.parse(message as string);
+			console.log('📩 Received WebSocket message:', messageData);
 
-		// Send a message to all WebSocket connections, loop over all the connected WebSockets.
-		this.sessions.forEach((attachment, connectedWs) => {
-			connectedWs.send(message);
-		});
+			// Check if this is a response to a pending HTTP request
+			if (messageData.id && this.pendingRequests.has(messageData.id)) {
+				const pendingRequest = this.pendingRequests.get(messageData.id)!;
+				clearTimeout(pendingRequest.timeout);
+				this.pendingRequests.delete(messageData.id);
 
-		// Send a message to all WebSocket connections except the connection (ws),
-		// // loop over all the connected WebSockets and filter out the connection (ws).
-		// this.sessions.forEach((attachment, connectedWs) => {
-		// 	if (connectedWs !== ws) {
-		// 		connectedWs.send(`[Durable Object] message: ${message}, from: ${session.id}. Total connections: ${this.sessions.size}`);
-		// 	}
-		// });
+				// Create HTTP response from WebSocket response
+				const httpResponse = new Response(messageData.body, {
+					status: messageData.status || 200,
+					headers: messageData.headers || { 'Content-Type': 'application/json' },
+				});
+
+				console.log(`✅ Resolved HTTP request ${messageData.id} with status ${messageData.status}`);
+				pendingRequest.resolve(httpResponse);
+				return;
+			}
+
+			// If it's not a response to an HTTP request, handle as regular WebSocket message
+			// Send a message to all WebSocket connections except the sender
+			this.sessions.forEach((attachment, connectedWs) => {
+				if (connectedWs !== ws) {
+					connectedWs.send(message);
+				}
+			});
+		} catch (error) {
+			console.error('❌ Error handling WebSocket message:', error);
+
+			// Send error response if it was a malformed message
+			ws.send(
+				JSON.stringify({
+					error: 'Failed to process message',
+					details: error instanceof Error ? error.message : 'Unknown error',
+				})
+			);
+		}
 	}
 
 	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-		// If the client closes the connection, the runtime will invoke the webSocketClose() handler.
-		// ws.close(code, 'Durable Object is closing WebSocket');
-        ws.close()
-        console.log(`WebSocket closed: code=${code}, reason=${reason}, wasClean=${wasClean}`);
+		// Remove the WebSocket from sessions
+		this.sessions.delete(ws);
+
+		// Clean up any pending requests that were waiting for this WebSocket
+		for (const [requestId, pendingRequest] of this.pendingRequests) {
+			clearTimeout(pendingRequest.timeout);
+			pendingRequest.reject(new Error('WebSocket connection closed'));
+		}
+		this.pendingRequests.clear();
+
+		console.log('WebSocket closed:', { code, reason, wasClean });
+		ws.close(code, 'Durable Object is closing WebSocket');
 	}
 }
