@@ -45,13 +45,14 @@ export class MyDurableObject extends DurableObject<Env> {
 		});
 	}
 
-	async processRequest(request: Request): Promise<Response> {
+	async processRequest(request: Request,proxy : string): Promise<Response> {
 		console.log(`number of pending requests: ${this.pendingRequests.size}`);
 		// Get request data
 		const requestBody = await request.text();
+		
 		const requestData = {
 			id: crypto.randomUUID(),
-			path: new URL(request.url).pathname.replace(/^\/serve\/nisada/, ''), // Remove /serve prefix
+			path: new URL(request.url).pathname.replace(new RegExp(`^/serve/${proxy}`), ''), // Remove leading /serve/{proxy} prefix
 			method: request.method,
 			body: requestBody || undefined,
 			headers: Object.fromEntries(request.headers.entries()),
