@@ -33,7 +33,55 @@ export { MyDurableObject };
 // 	},
 // } satisfies ExportedHandler<Env>;
 
-app.get('/', (c) => c.text('Hello World!'));
+const isProxyRequest = async (c: Context, next: Next) => {
+
+	const env = c.env as Env;
+
+	const url = new URL(c.req.url);
+	console.log('url: ', url, url.pathname, url.hostname);
+	const subdomain = url.hostname.split('.')[0];
+
+	const proxy = subdomain?.replace('-prxy', '');
+
+	if (subdomain && subdomain.endsWith('-prxy')) {
+		const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
+
+		try {
+			return await stub.processRequest(c.req.raw, proxy);
+		} catch (error) {
+			console.error('Error processing request through proxy:', error);
+			return c.text('Internal server error', 500);
+		}
+	}
+
+	await next();
+
+
+}
+app.use('*', isProxyRequest);
+
+app.get('/', async (c) => {
+	// const env = c.env as Env;
+
+	// const url = new URL(c.req.url);
+	// console.log('url: ', url, url.pathname, url.hostname);
+	// const subdomain = url.hostname.split('.')[0];
+
+	// const proxy = subdomain?.replace('-prxy', '');
+
+	// if (subdomain && subdomain.endsWith('-prxy')) {
+	// 	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
+
+	// 	try {
+	// 		return await stub.processRequest(c.req.raw, proxy);
+	// 	} catch (error) {
+	// 		console.error('Error processing request through proxy:', error);
+	// 		return c.text('Internal server error', 500);
+	// 	}
+	// }
+
+	return c.text('Hello Worldsa!');
+});
 
 app.get('/:proxy', async (c) => {
 	const env = c.env as Env;
