@@ -7,6 +7,10 @@
 	"name": "do",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-09",
+	"vars": {
+		"JWT_SECRET": "a-string-secret-at-least-256-bits-long",
+		"Client_API_Key": "MY_CLIENT_KEY_123"
+	},
 	"migrations": [
 		{
 			"new_sqlite_classes": [
@@ -25,7 +29,13 @@
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"kv_namespaces": [
+		{
+			"binding": "REGISTRED_PROXIES",
+			"id": "e71990b984d54f84b0b987cbf4574734"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

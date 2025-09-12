@@ -1,20 +1,33 @@
 import { DurableObject } from 'cloudflare:workers';
 
 export class MyDurableObject extends DurableObject<Env> {
-	sessions: Map<WebSocket, { [key: string]: string }>;
+	// sessions: Map<WebSocket, { [key: string]: string }>;
+	proxyclient: WebSocket | null = null;
+	proxyName: string = '';
 
 	// Keeps track of pending HTTP requests waiting for WebSocket responses
 	pendingRequests: Map<string, { resolve: Function; reject: Function; timeout: number }>;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		this.sessions = new Map();
+		// this.sessions = new Map();
 		this.pendingRequests = new Map();
 
-		this.ctx.getWebSockets().forEach((ws) => {
-			let attachment = ws.deserializeAttachment();
-			if (attachment) {
-				this.sessions.set(ws, { ...attachment });
+	
+
+		if (this.ctx.getWebSockets().length === 1) {
+			console.log('there is one active websocket connection and always it should be');
+			this.proxyclient = this.ctx.getWebSockets()[0];
+		}
+		else {
+			console.log('there is no active websocket connection or more than one : lenght = ',
+				this.ctx.getWebSockets().length
+			);
+		}
+
+		this.ctx.storage.get<string>('proxyName').then((name) => {
+			if (name) {
+				this.proxyName = name;
 			}
 		});
 
@@ -23,21 +36,26 @@ export class MyDurableObject extends DurableObject<Env> {
 	}
 
 	async fetch(request: Request): Promise<Response> {
-		// Creates two ends of a WebSocket connection.
 		const webSocketPair = new WebSocketPair();
 		const [client, server] = Object.values(webSocketPair);
 
 		this.ctx.acceptWebSocket(server);
 
-		// Generate a random UUID for the session.
 		const id = crypto.randomUUID();
 
-		// Attach the session ID to the WebSocket connection and serialize it.
-		// This is necessary to restore the state of the connection when the Durable Object wakes up.
-		server.serializeAttachment({ id });
+		const url = new URL(request.url);
+		const proxy = url.pathname.split('/')[2];
+
+		if (proxy) {
+			this.proxyName = proxy;
+			this.ctx.storage.put('proxyName', this.proxyName);
+		}
+
+		
 
 		// Add the WebSocket connection to the map of active sessions.
-		this.sessions.set(server, { id });
+		
+		this.proxyclient = server;
 
 		return new Response(null, {
 			status: 101,
@@ -45,11 +63,11 @@ export class MyDurableObject extends DurableObject<Env> {
 		});
 	}
 
-	async processRequest(request: Request,proxy : string): Promise<Response> {
+	async processRequest(request: Request, proxy: string): Promise<Response> {
 		console.log(`number of pending requests: ${this.pendingRequests.size}`);
 		// Get request data
 		const requestBody = await request.text();
-		
+
 		const requestData = {
 			id: crypto.randomUUID(),
 			path: new URL(request.url).pathname.replace(new RegExp(`^/serve/${proxy}`), ''), // Remove leading /serve/{proxy} prefix
@@ -58,21 +76,24 @@ export class MyDurableObject extends DurableObject<Env> {
 			headers: Object.fromEntries(request.headers.entries()),
 		};
 
-		// Find an active WebSocket connection to send the request to
+		// // Find an active WebSocket connection to send the request to
 		let targetWebSocket: WebSocket | null = null;
-		console.log('Active sessions:', this.sessions.size);
-		this.sessions.forEach((session, ws) => {
-			console.log('Available session:', session, ws);
-		});
-		for (const [ws, session] of this.sessions) {
-			// Use the first available WebSocket connection
+		// console.log('Active sessions:', this.sessions.size);
+		// this.sessions.forEach((session, ws) => {
+		// 	console.log('Available session:', session, ws);
+		// });
+		// for (const [ws, session] of this.sessions) {
+		// 	// Use the first available WebSocket connection
 
-			// console.log("available sessions:", this.sessions.forEach);
-			console.log('Using WebSocket session:', session);
+		// 	// console.log("available sessions:", this.sessions.forEach);
+		// 	console.log('Using WebSocket session:', session);
 
-			targetWebSocket = ws;
-			break;
-		}
+		// 	targetWebSocket = ws;
+		// 	break;
+		// }
+
+		//we gonna user thta websocket connection always
+		targetWebSocket = this.proxyclient;
 
 		if (!targetWebSocket) {
 			return new Response(
@@ -113,29 +134,27 @@ export class MyDurableObject extends DurableObject<Env> {
 		});
 	}
 
-
-
 	sayhello(name: string): void {
 		console.log(`Hello, ${name}!`);
 	}
 
 	base64ToArrayBuffer(base64: string): ArrayBuffer {
-    var binaryString = atob(base64);
-    var bytes = new Uint8Array(binaryString.length);
-    for (var i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-}
+		var binaryString = atob(base64);
+		var bytes = new Uint8Array(binaryString.length);
+		for (var i = 0; i < binaryString.length; i++) {
+			bytes[i] = binaryString.charCodeAt(i);
+		}
+		return bytes.buffer;
+	}
 
 	async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
 		// Get the session associated with the WebSocket connection.
-		const session = this.sessions.get(ws);
+		// const session = this.sessions.get(ws);
 
 		try {
 			// Parse the incoming message
 			const messageData = JSON.parse(message as string);
-			console.log('📩 Received WebSocket message:', messageData.id, messageData.isBinary || "not binary");
+			console.log('📩 Received WebSocket message:', messageData.id, messageData.isBinary || 'not binary');
 
 			// Check if this is a response to a pending HTTP request
 			if (messageData.id && this.pendingRequests.has(messageData.id)) {
@@ -147,14 +166,12 @@ export class MyDurableObject extends DurableObject<Env> {
 
 				if (messageData.isBinary) {
 					//parsing base64 encoded binary data
-					console.log("decoding base64 binary data");
-					body=this.base64ToArrayBuffer(messageData.body);
-
+					console.log('decoding base64 binary data');
+					body = this.base64ToArrayBuffer(messageData.body);
+				} else {
+					body = messageData.body;
 				}
-				else{
-					body=messageData.body;
-``				}
-				// Create HTTP response from WebSocket response
+
 				const httpResponse = new Response(body, {
 					status: messageData.status || 200,
 					headers: messageData.headers || { 'Content-Type': 'application/json' },
@@ -165,13 +182,13 @@ export class MyDurableObject extends DurableObject<Env> {
 				return;
 			}
 
-			// If it's not a response to an HTTP request, handle as regular WebSocket message
-			// Send a message to all WebSocket connections except the sender
-			this.sessions.forEach((attachment, connectedWs) => {
-				if (connectedWs !== ws) {
-					connectedWs.send(message);
-				}
-			});
+			// // If it's not a response to an HTTP request, handle as regular WebSocket message
+			// // Send a message to all WebSocket connections except the sender
+			// this.sessions.forEach((attachment, connectedWs) => {
+			// 	if (connectedWs !== ws) {
+			// 		connectedWs.send(message);
+			// 	}
+			// });
 		} catch (error) {
 			console.error('❌ Error handling WebSocket message:', error);
 
@@ -186,10 +203,21 @@ export class MyDurableObject extends DurableObject<Env> {
 	}
 
 	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-		// Remove the WebSocket from sessions
-		this.sessions.delete(ws);
+		console.log(`WebSocket closed: ${this.ctx.id}`);
+		// this.sessions.delete(ws);
 
-		// Clean up any pending requests that were waiting for this WebSocket
+		try {
+			console.log('deleting proxyName from storage' + this.proxyName);
+			if (this.proxyName) {
+				await this.ctx.storage.delete(this.proxyName);
+				await this.env.REGISTRED_PROXIES.delete(this.proxyName);
+				console.log('deleted proxyName from storage : ' + this.proxyName);
+			}
+		} catch (error) {
+			console.error('Error deleting proxyName from storage:', error);
+		}
+
+		// Clean up
 		for (const [requestId, pendingRequest] of this.pendingRequests) {
 			clearTimeout(pendingRequest.timeout);
 			pendingRequest.reject(new Error('WebSocket connection closed'));
@@ -198,5 +226,26 @@ export class MyDurableObject extends DurableObject<Env> {
 
 		console.log('WebSocket closed:', { code, reason, wasClean });
 		ws.close(code, 'Durable Object is closing WebSocket');
+	}
+	async webSocketError(ws: WebSocket, error: Error) {
+		try {
+			console.log('deleting proxyName from storage' + this.proxyName);
+			if (this.proxyName) {
+				await this.ctx.storage.delete(this.proxyName);
+				await this.env.REGISTRED_PROXIES.delete(this.proxyName);
+				console.log('deleted proxyName from storage : ' + this.proxyName);
+			}
+		} catch (error) {
+			console.error('Error deleting proxyName from storage:', error);
+		}
+
+		// Clean up
+		for (const [requestId, pendingRequest] of this.pendingRequests) {
+			clearTimeout(pendingRequest.timeout);
+			pendingRequest.reject(new Error('WebSocket connection closed'));
+		}
+		this.pendingRequests.clear();
+
+		console.error('WebSocket error:', error);
 	}
 }

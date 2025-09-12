@@ -1,38 +1,33 @@
 import { DurableObject, env } from 'cloudflare:workers';
 import { Context, Hono, Next } from 'hono';
-
+import { jwt, sign } from 'hono/jwt';
 const app = new Hono();
 import { MyDurableObject } from './do';
 export { MyDurableObject };
 
-// export default {
-// 	/**
-// 	 * This is the standard fetch handler for a Cloudflare Worker
-// 	 *
-// 	 * @param request - The request submitted to the Worker from the client
-// 	 * @param env - The interface to reference bindings declared in wrangler.jsonc
-// 	 * @param ctx - The execution context of the Worker
-// 	 * @returns The response to be sent back to the client
-// 	 */
-// 	async fetch(request, env, ctx): Promise<Response> {
-// 		// Create a stub to open a communication channel with the Durable Object
-// 		// instance named "foo".
-// 		//
-// 		// Requests from all Workers to the Durable Object instance named "foo"
-// 		// will go to a single remote Durable Object instance.
+const whoareu = (c:Context, next :Next) => {
+	console.log('whoareu middleware called');
+	const clientH = c.req.header('client');
+	if (clientH && clientH === 'dotunnel-node-cli-client') {
+		return next();
+	}
+	return c.text('Unauthorized', 401);
+}
+const isProxyAvailable = async (proxy : string) => {
+	try {
+		const value = await env.REGISTRED_PROXIES.get(proxy);
+		if (!value) {
+			return true;
+		}
+	}catch (error) {
+		console.error('Error checking proxy availability form KV ', error);
+		return false;
+	}
 
-// 		const stub = env.MY_DURABLE_OBJECT.getByName('foo');
-
-// 		// Call the `sayHello()` RPC method on the stub to invoke the method on
-// 		// the remote Durable Object instance.
-// 		const greeting = await stub.sayHello('world');
-
-// 		return new Response(greeting);
-// 	},
-// } satisfies ExportedHandler<Env>;
+	return false;
+}
 
 const isProxyRequest = async (c: Context, next: Next) => {
-
 	const env = c.env as Env;
 
 	const url = new URL(c.req.url);
@@ -45,6 +40,7 @@ const isProxyRequest = async (c: Context, next: Next) => {
 		const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
 
 		try {
+			
 			return await stub.processRequest(c.req.raw, proxy);
 		} catch (error) {
 			console.error('Error processing request through proxy:', error);
@@ -53,9 +49,7 @@ const isProxyRequest = async (c: Context, next: Next) => {
 	}
 
 	await next();
-
-
-}
+};
 app.use('*', isProxyRequest);
 
 app.get('/', async (c) => {
@@ -81,7 +75,8 @@ app.get('/', async (c) => {
 	return c.text('Hello Worldsa!');
 });
 
-app.get('/:proxy', async (c) => {
+app.get('register/:proxy', whoareu, async (c) => {
+	console.log('Authorized request to register proxy');
 	const env = c.env as Env;
 	let proxy: string | undefined;
 	try {
@@ -92,35 +87,37 @@ app.get('/:proxy', async (c) => {
 	if (!proxy) {
 		return c.text('Proxy parameter is required', 400);
 	}
+
+	const available = await isProxyAvailable(proxy);
+	if (!available) {
+		return c.text('Proxy name is already taken', 409);
+	}
+
+	// put the porxy name in kv
+	await env.REGISTRED_PROXIES.put(proxy, "registered");
+
+	// env.MY_DURABLE_OBJECT.
 	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-	stub.sayhello('world');
+	// stub.sayhello('world');
 	return stub.fetch(c.req.raw);
+	// return c.text('Authorized : ' + proxy);
 });
 
-app.get('serve/:proxy/*', async (c) => {
+app.get('is-available/:proxy', whoareu, async (c) => {
 	const env = c.env as Env;
 	let proxy: string | undefined;
-	console.log('serving: ', c.req.param('proxy'));
-
 	try {
 		proxy = c.req.param('proxy');
 	} catch (error) {
 		return c.text('Invalid proxy', 400);
 	}
 
-	if (!proxy) {
-		return c.text('Proxy parameter is required', 400);
+	if (await isProxyAvailable(proxy)) {
+		return c.json({ available: true });
+	} else {
+		return c.json({ available: false });
 	}
 
-	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-
-	try {
-		// Use the internal WebSocket communication through processRequest
-		return await stub.processRequest(c.req.raw, proxy);
-	} catch (error) {
-		console.error('Error processing request through proxy:', error);
-		return c.text('Internal server error', 500);
-	}
 });
 
 export default app;
