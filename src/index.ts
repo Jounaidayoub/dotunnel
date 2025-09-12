@@ -13,6 +13,9 @@ const whoareu = (c:Context, next :Next) => {
 	}
 	return c.text('Unauthorized', 401);
 }
+
+// Check if a proxy name is available (not registered)
+//if no value found in kv, then it's available
 const isProxyAvailable = async (proxy : string) => {
 	try {
 		const value = await env.REGISTRED_PROXIES.get(proxy);
@@ -37,6 +40,12 @@ const isProxyRequest = async (c: Context, next: Next) => {
 	const proxy = subdomain?.replace('-prxy', '');
 
 	if (subdomain && subdomain.endsWith('-prxy')) {
+
+		if (await isProxyAvailable(proxy)) {
+			//meaning no one is using this proxy
+			return c.text('This proxy is not registered', 404);
+		}
+
 		const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
 
 		try {
@@ -53,26 +62,8 @@ const isProxyRequest = async (c: Context, next: Next) => {
 app.use('*', isProxyRequest);
 
 app.get('/', async (c) => {
-	// const env = c.env as Env;
-
-	// const url = new URL(c.req.url);
-	// console.log('url: ', url, url.pathname, url.hostname);
-	// const subdomain = url.hostname.split('.')[0];
-
-	// const proxy = subdomain?.replace('-prxy', '');
-
-	// if (subdomain && subdomain.endsWith('-prxy')) {
-	// 	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-
-	// 	try {
-	// 		return await stub.processRequest(c.req.raw, proxy);
-	// 	} catch (error) {
-	// 		console.error('Error processing request through proxy:', error);
-	// 		return c.text('Internal server error', 500);
-	// 	}
-	// }
-
-	return c.text('Hello Worldsa!');
+	
+	return c.text('Hello World!!');
 });
 
 app.get('register/:proxy', whoareu, async (c) => {
@@ -112,7 +103,7 @@ app.get('is-available/:proxy', whoareu, async (c) => {
 	} catch (error) {
 		return c.text('Invalid proxy', 400);
 	}
-
+	console.log('is-available for proxy: ', proxy);
 	if (await isProxyAvailable(proxy)) {
 		return c.json({ available: true });
 	} else {
