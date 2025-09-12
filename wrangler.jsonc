@@ -7,10 +7,6 @@
 	"name": "do",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-09",
-	"vars": {
-		"JWT_SECRET": "a-string-secret-at-least-256-bits-long",
-		"Client_API_Key": "MY_CLIENT_KEY_123"
-	},
 	"migrations": [
 		{
 			"new_sqlite_classes": [

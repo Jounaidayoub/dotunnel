@@ -105,6 +105,7 @@ app.get('register/:proxy', whoareu, async (c) => {
 
 app.get('is-available/:proxy', whoareu, async (c) => {
 	const env = c.env as Env;
+	// env.
 	let proxy: string | undefined;
 	try {
 		proxy = c.req.param('proxy');
