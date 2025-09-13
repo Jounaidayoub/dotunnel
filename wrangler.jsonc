@@ -15,6 +15,9 @@
 			"tag": "v1"
 		}
 	],
+	"vars": {
+		"request_timeout": "3000",
+	},
 	"durable_objects": {
 		"bindings": [
 			{

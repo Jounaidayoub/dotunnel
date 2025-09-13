@@ -111,13 +111,15 @@ export class MyDurableObject extends DurableObject<Env> {
 			);
 		}
 
+		const requestTimeout = parseInt(this.env.request_timeout) || 10000; 
+
 		// Create a promise that will resolve when we get the response
 		return new Promise((resolve, reject) => {
 			const timeout = setTimeout(() => {
-				console.log(`❌ Request ${requestData.id} timed out after 30 seconds`);
+				console.log(`❌ Request ${requestData.id} timed out after ${requestTimeout} milliseconds`);
 				resolve(new Response('Request timeout - no response from WebSocket client', { status: 504 })); // 504 Gateway Timeout
 				this.pendingRequests.delete(requestData.id);
-			}, 30000); // 30 second timeout
+			}, requestTimeout);
 
 			// Store the resolve function to call it when we get the response
 			// We'll use the request ID to match responses
