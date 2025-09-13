@@ -13,16 +13,11 @@ export class MyDurableObject extends DurableObject<Env> {
 		// this.sessions = new Map();
 		this.pendingRequests = new Map();
 
-	
-
 		if (this.ctx.getWebSockets().length === 1) {
 			console.log('there is one active websocket connection and always it should be');
 			this.proxyclient = this.ctx.getWebSockets()[0];
-		}
-		else {
-			console.log('there is no active websocket connection or more than one : lenght = ',
-				this.ctx.getWebSockets().length
-			);
+		} else {
+			console.log('there is no active websocket connection or more than one : lenght = ', this.ctx.getWebSockets().length);
 		}
 
 		this.ctx.storage.get<string>('proxyName').then((name) => {
@@ -41,7 +36,7 @@ export class MyDurableObject extends DurableObject<Env> {
 
 		this.ctx.acceptWebSocket(server);
 
-		const id = crypto.randomUUID();
+		// const id = crypto.randomUUID();
 
 		const url = new URL(request.url);
 		const proxy = url.pathname.split('/')[2];
@@ -51,10 +46,8 @@ export class MyDurableObject extends DurableObject<Env> {
 			this.ctx.storage.put('proxyName', this.proxyName);
 		}
 
-		
-
 		// Add the WebSocket connection to the map of active sessions.
-		
+
 		this.proxyclient = server;
 
 		return new Response(null, {
@@ -64,6 +57,15 @@ export class MyDurableObject extends DurableObject<Env> {
 	}
 
 	async processRequest(request: Request, proxy: string): Promise<Response> {
+
+
+		if (!this.proxyclient) {
+		
+			return new Response('Proxy client not connected', {
+				status: 503, 
+			});
+		}
+
 		console.log(`number of pending requests: ${this.pendingRequests.size}`);
 		// Get request data
 		const requestBody = await request.text();

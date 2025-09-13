@@ -41,10 +41,15 @@ const isProxyRequest = async (c: Context, next: Next) => {
 
 	if (subdomain && subdomain.endsWith('-prxy')) {
 
-		if (await isProxyAvailable(proxy)) {
-			//meaning no one is using this proxy
-			return c.text('This proxy is not registered', 404);
-		}
+		// Removing this check for now , since it expensve to check kv on every request
+		// and probaly traffic comes from registered proxies only , so most of time useless check
+		// we gonna check insde the do object !!
+		// require a review though
+
+		// if (await isProxyAvailable(proxy)) {
+		// 	//meaning no one is using this proxy
+		// 	return c.text('This proxy is not registered', 404);
+		// }
 
 		const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
 
