@@ -29,39 +29,6 @@ The project uses a combination of a Cloudflare Worker, a Durable Object, and a l
 This entire process happens in milliseconds, creating a seamless and fast link between the public internet and your local development environment.
 
 
-## Getting Started
-
-### Prerequisites
-
--   A Cloudflare account.
--   `wrangler` CLI installed and configured.
--   Node.js and npm installed for the client.
-
-### Deployment
-
-1.  **Clone the repository**:
-    ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name>
-    ```
-
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-
-3.  **Configure `wrangler.jsonc`**:
-    -   Update the `name` of your worker.
-    -   Create the `REGISTRED_PROXIES` KV namespace in your Cloudflare dashboard and add its `id` to `wrangler.jsonc`.
-    -   Make sure your Durable Object binding is correctly configured.
-
-4.  **Deploy the Worker**:
-    ```bash
-    npx wrangler deploy
-    ```
-
-
-
 
 ## Use Cases
 
