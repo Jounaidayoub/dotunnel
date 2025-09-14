@@ -16,7 +16,7 @@
 		}
 	],
 	"vars": {
-		"request_timeout": "3000",
+		"request_timeout": "15000",
 	},
 	"durable_objects": {
 		"bindings": [
