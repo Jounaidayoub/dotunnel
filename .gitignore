@@ -2,7 +2,7 @@
 
 .clinerules/
 
-wrangler.jsonc
+# wrangler.jsonc
 
 logs
 _.log
