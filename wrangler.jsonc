@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "dotunnel",
+	"name": "do",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-09",
 	"migrations": [
