@@ -4,7 +4,7 @@
 
 It's perfect for sharing your work-in-progress, testing webhooks from third-party services, or debugging APIs without the hassle of configuring firewalls, port forwarding, or complex network setups.
 ## How to Use
-You can use the proxy by checking out  the [DoTunnel client](https://www.npmjs.com/package/dotunnel)  running `npx dotunnel` and follow the prompts to set up your tunnel. For more details, check out the [repo for the client DoTunnel client ](https://github.com/jounaidayoub/do-client).
+You can use the proxy by checking out  the [DoTunnel client](https://www.npmjs.com/package/dotunnel)  running `npx dotunnel` and follow the prompts to set up your tunnel. For more details, check out the [repo for the client DoTunnel client ](https://github.com/jounaidayoub/dotunnel-client).
 
 ## Features
 
