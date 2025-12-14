@@ -38,11 +38,11 @@ This entire process happens in milliseconds, creating a seamless and fast link b
 -   **Mobile App Development**: Test API calls from a mobile app to your local development server.
 
 
-## TODO
+## TODOs
 
 now the project has basic features like creating a tunnel and forwarding requests to localhost,  but there is still a space for improvement :
 
-- **Binary formats**: the client currently supports binary formats by converting them to base64, which not idea and add overhead on both the client and the worker side .
+- **Binary formats**: the client currently supports binary formats by converting them to base64, which not ideal and add overhead on both the client and the worker side .
 - **Size Limit**: since we are using durable objects for websocket connections ,for some reason , Cloudflare imposes  a limit of ONLY 1MB on how much data u can send over a websocket message, so we need to implement a way to chunk large payloads.
 
-- **Websocket Support**: Ironically the project core features are around websockts , yet still we cant proxy WebSocket connections. alot of dev severs use websockt for HMR.so this has to be DONE , Add support for tunneling WebSocket connections .
+- **Websocket Support**: Ironically the project core features are around websockts , yet still we cant proxy WebSocket connections. alot of dev severs use websockt for HMR , so this has to be DONE , Add support for tunneling WebSocket connections .
