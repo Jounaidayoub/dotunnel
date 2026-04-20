@@ -1,6 +1,12 @@
 # Logs
 
 .clinerules/
+.agents
+.agent
+skills-lock.json
+docs/*
+.vscode/*
+
 
 # wrangler.jsonc
 

@@ -1,120 +1,58 @@
-import { DurableObject, env } from 'cloudflare:workers';
-import { Context, Hono, Next } from 'hono';
-import { jwt, sign } from 'hono/jwt';
-const app = new Hono();
-import { MyDurableObject } from './do';
+import { env } from 'cloudflare:workers';
+import { Hono, } from 'hono';
+import { doTunnel as MyDurableObject } from './cf/dotunnel';
+import { CloudflareTunnelStore } from './cf/tunnelstore';
 export { MyDurableObject };
 
-const whoareu = (c:Context, next :Next) => {
-	console.log('whoareu middleware called');
-	const clientH = c.req.header('client');
-	if (clientH && clientH === 'dotunnel-node-cli-client') {
-		return next();
-	}
-	return c.text('Unauthorized', 401);
-}
+const tunnelStore = new CloudflareTunnelStore(env.MY_DURABLE_OBJECT, env.REGISTRED_PROXIES);
+const app = new Hono();
 
-// Check if a proxy name is available (not registered)
-//if no value found in kv, then it's available
-const isProxyAvailable = async (proxy : string) => {
-	try {
-		const value = await env.REGISTRED_PROXIES.get(proxy);
-		if (!value) {
-			return true;
-		}
-	}catch (error) {
-		console.error('Error checking proxy availability form KV ', error);
-		return false;
-	}
-
-	return false;
-}
-
-const isProxyRequest = async (c: Context, next: Next) => {
-	const env = c.env as Env;
-
-	const url = new URL(c.req.url);
-	console.log('url: ', url, url.pathname, url.hostname);
+const parseTunnelName = (request: Request): string | null => {
+	const url = new URL(request.url);
 	const subdomain = url.hostname.split('.')[0];
-
-	const proxy = subdomain?.replace('-prxy', '');
-
-	if (subdomain && subdomain.endsWith('-prxy')) {
-
-		// Removing this check for now , since it expensve to check kv on every request
-		// and probaly traffic comes from registered proxies only , so most of time useless check
-		// we gonna check insde the do object !!
-		// require a review though
-
-		// if (await isProxyAvailable(proxy)) {
-		// 	//meaning no one is using this proxy
-		// 	return c.text('This proxy is not registered', 404);
-		// }
-
-		const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-
-		try {
-			
-			return await stub.processRequest(c.req.raw, proxy);
-		} catch (error) {
-			console.error('Error processing request through proxy:', error);
-			return c.text('Internal server error', 500);
-		}
+	if (subdomain?.endsWith('-prxy')) {
+		return subdomain.replace('-prxy', '');
 	}
+	return null;
+}
 
-	await next();
-};
-app.use('*', isProxyRequest);
+
+app.use('*', async (c, next) => {
+	const name = parseTunnelName(c.req.raw);
+	if (name) {
+		const tunnel = await tunnelStore.get(name);
+		if (tunnel) {
+			return await tunnel.forward(c.req.raw);
+		}
+		//not registered proxy/tunnel
+		return c.text('Tunnel not found', 404);
+	}
+	return await next();
+});
 
 app.get('/', async (c) => {
-	
+
 	return c.text('Hello World!!');
 });
 
-app.get('register/:proxy', whoareu, async (c) => {
-	console.log('Authorized request to register proxy');
-	const env = c.env as Env;
-	let proxy: string | undefined;
-	try {
-		proxy = c.req.param('proxy');
-	} catch (error) {
-		return c.text('Invalid proxy', 400);
-	}
-	if (!proxy) {
-		return c.text('Proxy parameter is required', 400);
-	}
 
-	const available = await isProxyAvailable(proxy);
-	if (!available) {
-		return c.text('Proxy name is already taken', 409);
+app.get('/register/:name', async (c) => {
+	const name = c.req.param('name');
+	const isAvailable = await tunnelStore.isAvailable(name);
+	if (!isAvailable) {
+		return c.json('Tunnel name already taken', 409);
 	}
-
-	// put the porxy name in kv
-	await env.REGISTRED_PROXIES.put(proxy, "registered");
-
-	// env.MY_DURABLE_OBJECT.
-	const stub = env.MY_DURABLE_OBJECT.getByName(proxy);
-	// stub.sayhello('world');
-	return stub.fetch(c.req.raw);
-	// return c.text('Authorized : ' + proxy);
+	// Forwarding the original request preserves the external WebSocket upgrade handshake.
+	return tunnelStore.register(name, c.req.raw);
 });
 
-app.get('is-available/:proxy', whoareu, async (c) => {
-	const env = c.env as Env;
-	// env.
-	let proxy: string | undefined;
-	try {
-		proxy = c.req.param('proxy');
-	} catch (error) {
-		return c.text('Invalid proxy', 400);
+app.get('is-available/:proxy', async (c) => {
+	const name = c.req.param('proxy');
+	if (!name) {
+		return c.json('Proxy parameter is required', 400);
 	}
-	console.log('is-available for proxy: ', proxy);
-	if (await isProxyAvailable(proxy)) {
-		return c.json({ available: true });
-	} else {
-		return c.json({ available: false });
-	}
-
+	const available = await tunnelStore.isAvailable(name);
+	return c.json({ available });
 });
 
 export default app;
