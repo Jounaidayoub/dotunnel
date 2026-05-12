@@ -1,11 +1,23 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Tunnel } from "../core/interfaces";
+import {
+	decodeTunnelResponse,
+	encodeTunnelRequest,
+	TunnelRequestPayload,
+	TunnelResponsePayload,
+} from "../core/protocol";
+
+type PendingRequests = {
+	resolve: (response: Response) => void;
+	reject: (error: Error) => void;
+	timeout: ReturnType<typeof setTimeout>;
+};
 
 export class doTunnel extends DurableObject<Env> implements Tunnel {
 	proxyclient: WebSocket | null = null;
 	proxyName: string = '';
 
-	pendingRequests: Map<string, { resolve: Function; reject: Function; timeout: number }>;
+	pendingRequests: Map<string, PendingRequests> = new Map();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -24,7 +36,6 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 			}
 		});
 
-		// Sets an application level auto response that does not wake hibernated WebSockets.
 		this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
 	}
 
@@ -34,8 +45,6 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 
 		this.ctx.acceptWebSocket(server);
 
-		// const id = crypto.randomUUID();
-
 		const url = new URL(request.url);
 		const proxy = url.pathname.split('/')[2];
 
@@ -43,8 +52,6 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 			this.proxyName = proxy;
 			this.ctx.storage.put('proxyName', this.proxyName);
 		}
-
-		// Add the WebSocket connection to the map of active sessions.
 
 		this.proxyclient = server;
 
@@ -55,20 +62,17 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 	}
 
 	async forward(request: Request): Promise<Response> {
-
-
-		if (!this.proxyclient) {
-		
+		const targetWebSocket = this.proxyclient;
+		if (!targetWebSocket) {
 			return new Response('Proxy client not connected', {
-				status: 503, 
+				status: 503,
 			});
 		}
 
 		console.log(`number of pending requests: ${this.pendingRequests.size}`);
 
 		const requestBody = await request.text();
-
-		const requestData = {
+		const requestData: TunnelRequestPayload = {
 			id: crypto.randomUUID(),
 			path: new URL(request.url).pathname,
 			method: request.method,
@@ -76,42 +80,19 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 			headers: Object.fromEntries(request.headers.entries()),
 		};
 
-		let targetWebSocket: WebSocket | null   = null;
-		targetWebSocket = this.proxyclient;
+		const requestTimeout = parseInt(this.env.request_timeout) || 10000;
 
-		if (!targetWebSocket) {
-			return new Response(
-				JSON.stringify({
-					status: 'error',
-					message: 'No active WebSocket connections available',
-					timestamp: new Date().toISOString(),
-				}),
-				{
-					status: 503, // Service Unavailable
-					headers: { 'Content-Type': 'application/json' },
-				}
-			);
-		}
-
-		const requestTimeout = parseInt(this.env.request_timeout) || 10000; 
-
-		// Create a promise that will resolve when we get the response
 		return new Promise((resolve, reject) => {
 			const timeout = setTimeout(() => {
-				console.log(`❌ Request ${requestData.id} timed out after ${requestTimeout} milliseconds`);
+				console.log(` Request ${requestData.id} timed out after ${requestTimeout} milliseconds`);
 				resolve(new Response('Request timeout - no response from WebSocket client', { status: 504 })); // 504 Gateway Timeout
 				this.pendingRequests.delete(requestData.id);
 			}, requestTimeout);
 
-			// Store the resolve function to call it when we get the response
-			// We'll use the request ID to match responses
-			this.pendingRequests = this.pendingRequests || new Map();
 			this.pendingRequests.set(requestData.id, { resolve, reject, timeout });
 
 			try {
-				// Send the request data to the WebSocket client
-				targetWebSocket.send(JSON.stringify(requestData));
-				console.log(`📤 Sent request ${requestData.id} to WebSocket client`);
+				targetWebSocket.send(encodeTunnelRequest(requestData));
 			} catch (error) {
 				clearTimeout(timeout);
 				this.pendingRequests.delete(requestData.id);
@@ -120,61 +101,37 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 		});
 	}
 
-	base64ToArrayBuffer(base64: string): ArrayBuffer {
-		var binaryString = atob(base64);
-		var bytes = new Uint8Array(binaryString.length);
-		for (var i = 0; i < binaryString.length; i++) {
+	private base64ToArrayBuffer(base64: string): ArrayBuffer {
+		const binaryString = atob(base64);
+		const bytes = new Uint8Array(binaryString.length);
+		for (let i = 0; i < binaryString.length; i++) {
 			bytes[i] = binaryString.charCodeAt(i);
 		}
 		return bytes.buffer;
 	}
 
 	async webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
-		// Get the session associated with the WebSocket connection.
-		// const session = this.sessions.get(ws);
-
 		try {
-			// Parse the incoming message
-			const messageData = JSON.parse(message as string);
-			console.log('📩 Received WebSocket message:', messageData.id, messageData.isBinary || 'not binary');
-
-			// Check if this is a response to a pending HTTP request
-			if (messageData.id && this.pendingRequests.has(messageData.id)) {
-				const pendingRequest = this.pendingRequests.get(messageData.id)!;
-				clearTimeout(pendingRequest.timeout);
-				this.pendingRequests.delete(messageData.id);
-
-				let body;
-
-				if (messageData.isBinary) {
-					//parsing base64 encoded binary data
-					console.log('decoding base64 binary data');
-					body = this.base64ToArrayBuffer(messageData.body);
-				} else {
-					body = messageData.body;
-				}
-
-				const httpResponse = new Response(body, {
-					status: messageData.status || 200,
-					headers: messageData.headers || { 'Content-Type': 'application/json' },
-				});
-
-				console.log(`✅ Resolved HTTP request ${messageData.id} with status ${messageData.status}`);
-				pendingRequest.resolve(httpResponse);
+			const response = decodeTunnelResponse(message);
+			if (!response) {
 				return;
 			}
 
-			// // If it's not a response to an HTTP request, handle as regular WebSocket message
-			// // Send a message to all WebSocket connections except the sender
-			// this.sessions.forEach((attachment, connectedWs) => {
-			// 	if (connectedWs !== ws) {
-			// 		connectedWs.send(message);
-			// 	}
-			// });
-		} catch (error) {
-			console.error('❌ Error handling WebSocket message:', error);
+			const pendingRequest = this.pendingRequests.get(response.id);
+			if (!pendingRequest) {
+				return;
+			}
+			this.pendingRequests.delete(response.id);
+			clearTimeout(pendingRequest.timeout);
 
-			// Send error response if it was a malformed message
+			const body = this.resolveResponseBody(response);
+			const httpResponse = new Response(body, {
+				status: response.status || 200,
+				headers: response.headers || { 'Content-Type': 'application/json' },
+			});
+
+			pendingRequest.resolve(httpResponse);
+		} catch (error) {
 			ws.send(
 				JSON.stringify({
 					error: 'Failed to process message',
@@ -184,50 +141,43 @@ export class doTunnel extends DurableObject<Env> implements Tunnel {
 		}
 	}
 
-	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-		console.log(`WebSocket closed: ${this.ctx.id}`);
-		// this.sessions.delete(ws);
+	private resolveResponseBody(response: TunnelResponsePayload): BodyInit | null {
+		if (!response.body) {
+			return null;
+		}
+		if (response.isBinary) {
+			return this.base64ToArrayBuffer(response.body);
+		}
+		return response.body;
+	}
 
-		try {
-			console.log('deleting proxyName from storage' + this.proxyName);
-			if (this.proxyName) {
+	private async cleanupSocket(reason: string) {
+		const pending = Array.from(this.pendingRequests.values());
+		this.pendingRequests.clear();
+		for (const pendingRequest of pending) {
+			clearTimeout(pendingRequest.timeout);
+			pendingRequest.reject(new Error(reason));
+		}
+
+		if (this.proxyName) {
+			try {
 				await this.ctx.storage.delete(this.proxyName);
 				await this.env.REGISTRED_PROXIES.delete(this.proxyName);
-				console.log('deleted proxyName from storage : ' + this.proxyName);
+			} catch (error) {
+				console.error('Error deleting proxyName from storage:', error);
 			}
-		} catch (error) {
-			console.error('Error deleting proxyName from storage:', error);
 		}
+		this.proxyclient = null;
+		this.proxyName = '';
+	}
 
-		// Clean up
-		for (const [requestId, pendingRequest] of this.pendingRequests) {
-			clearTimeout(pendingRequest.timeout);
-			pendingRequest.reject(new Error('WebSocket connection closed'));
-		}
-		this.pendingRequests.clear();
-
-		console.log('WebSocket closed:', { code, reason, wasClean });
+	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
+		await this.cleanupSocket('WebSocket connection closed');
 		ws.close(code, 'Durable Object is closing WebSocket');
+		console.log('WebSocket closed:', { code, reason, wasClean });
 	}
 	async webSocketError(ws: WebSocket, error: Error) {
-		try {
-			console.log('deleting proxyName from storage' + this.proxyName);
-			if (this.proxyName) {
-				await this.ctx.storage.delete(this.proxyName);
-				await this.env.REGISTRED_PROXIES.delete(this.proxyName);
-				console.log('deleted proxyName from storage : ' + this.proxyName);
-			}
-		} catch (error) {
-			console.error('Error deleting proxyName from storage:', error);
-		}
-
-		// Clean up
-		for (const [requestId, pendingRequest] of this.pendingRequests) {
-			clearTimeout(pendingRequest.timeout);
-			pendingRequest.reject(new Error('WebSocket connection closed'));
-		}
-		this.pendingRequests.clear();
-
+		await this.cleanupSocket('WebSocket connection closed');
 		console.error('WebSocket error:', error);
 	}
 }
