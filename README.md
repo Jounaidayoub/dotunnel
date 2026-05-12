@@ -3,8 +3,16 @@
 `do-tunnel` is a  lightweight HTTP tunnel proxy built on Cloudflare Workers and Durable Objects. It allows you to expose your local development server to the internet with a secure, public URL.
 
 It's perfect for sharing your work-in-progress, testing webhooks from third-party services, or debugging APIs without the hassle of configuring firewalls, port forwarding, or complex network setups.
+
 ## How to Use
-You can use the proxy by checking out  the [DoTunnel client](https://www.npmjs.com/package/dotunnel)  running `npx dotunnel` and follow the prompts to set up your tunnel. For more details, check out the [repo for the client DoTunnel client ](https://github.com/jounaidayoub/dotunnel-client).
+
+```bash
+npx dotunnel --port 3000 --name my-app
+```
+
+http://localhost:3000 → https://my-app-prxy.jounaid.dev
+
+For more details, check out the [DoTunnel client repo](https://github.com/jounaidayoub/dotunnel-client).
 
 ## Features
 
