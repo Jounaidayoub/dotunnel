@@ -1,21 +1,17 @@
 import { env } from 'cloudflare:workers';
-import { Hono, } from 'hono';
+import { Hono } from 'hono';
 import { doTunnel as MyDurableObject } from './cf/dotunnel';
 import { CloudflareTunnelStore } from './cf/tunnelstore';
+import { parseTunnelName } from './core/parse';
 export { MyDurableObject };
 
 const tunnelStore = new CloudflareTunnelStore(env.MY_DURABLE_OBJECT, env.REGISTRED_PROXIES);
 const app = new Hono();
 
-const parseTunnelName = (request: Request): string | null => {
-	const url = new URL(request.url);
-	const subdomain = url.hostname.split('.')[0];
-	if (subdomain?.endsWith('-prxy')) {
-		return subdomain.replace('-prxy', '');
-	}
-	return null;
-}
-
+app.onError((err, c) => {
+	console.error('Unhandled error:', err);
+	return c.json({ error: 'Internal Server Error' }, 500);
+});
 
 app.use('*', async (c, next) => {
 	const name = parseTunnelName(c.req.raw);
@@ -24,14 +20,12 @@ app.use('*', async (c, next) => {
 		if (tunnel) {
 			return await tunnel.forward(c.req.raw);
 		}
-		//not registered proxy/tunnel
 		return c.text('Tunnel not found', 404);
 	}
 	return await next();
 });
 
 app.get('/', async (c) => {
-
 	return c.text('Hello World!!');
 });
 
@@ -42,7 +36,6 @@ app.get('/register/:name', async (c) => {
 	if (!isAvailable) {
 		return c.json('Tunnel name already taken', 409);
 	}
-	// Forwarding the original request preserves the external WebSocket upgrade handshake.
 	return tunnelStore.register(name, c.req.raw);
 });
 
